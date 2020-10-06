@@ -59,12 +59,12 @@ fn probe_icecast(addr: &net::SocketAddr, path: &str, timeout_sec: u32) -> Result
             return Err(());
         }
 
-        offset += consumed;
-
         let just_received = &response[offset..offset + consumed];
         if let Some(_) = just_received.iter().position(|x| *x == 10) {
             break;
         }
+
+        offset += consumed;
     }
 
     let status_slice = &response[..offset];
