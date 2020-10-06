@@ -60,19 +60,33 @@ fn probe_icecast(addr: &net::SocketAddr, path: &str, timeout_sec: u32) -> Result
         }
 
         let just_received = &response[offset..offset + consumed];
+        offset += consumed;
         if let Some(_) = just_received.iter().position(|x| *x == 10) {
             break;
         }
-
-        offset += consumed;
     }
 
     let status_slice = &response[..offset];
-    let status_start = status_slice.iter().position(|x| *x == 32).ok_or(())?;
+    let status_start = status_slice.iter().position(|x| *x == 32)
+        .ok_or_else(|| {
+            eprintln!(
+                "[watchdog] Could not find first space character in HTTP response to {}@{}",
+                path, addr
+            );
+            ()
+        })?;
+
     let status_end = status_slice[status_start + 1..]
         .iter()
         .position(|x| *x == 32)
-        .ok_or(())?;
+        .ok_or_else(|| {
+            eprintln!(
+                "[watchdog] Could not find second space character in HTTP response to {}@{}",
+                path, addr
+            );
+            ()
+        })? + status_start + 1;
+
     let status = str::from_utf8(&status_slice[status_start + 1..status_end]).or_else(|error| {
         eprintln!(
             "[watchdog] Could not decode HTTP response from {}@{}: {}",
@@ -124,7 +138,6 @@ pub fn watchdog_worker(config: WatchdogConfig) {
     loop {
         thread::sleep(interval);
         if let Err(_) = probe_icecast(&config.addr, &config.path, 10) {
-            eprintln!("[weather] Triggering restart due to failed probe");
             restart_ezstream(&config.service);
         }
     }
