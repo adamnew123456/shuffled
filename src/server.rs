@@ -661,10 +661,14 @@ pub fn server_worker(service_config: ServiceConfig, special_config: SpecialBaseC
         }
     };
 
+    let mut rng = utils::seeded_random();
     let init_playlists = match read_m3u8_files(&service_config.playlist_dir) {
         Ok(mut playlists) => playlists
             .drain()
-            .map(|(playlist, paths)| (playlist, Playlist::new(paths).unwrap()))
+            .map(|(playlist, mut paths)| {
+                shuffle(&mut paths, &mut rng);
+                (playlist, Playlist::new(paths).unwrap())
+            })
             .collect::<HashMap<String, Playlist>>(),
         Err(error) => {
             eprintln!("[server] {}", error);
