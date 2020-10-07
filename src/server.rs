@@ -552,6 +552,8 @@ fn process_request<'a>(
                         special_queue.next();
                         special_queue.update_timer();
                         return RpcResponse::Track(special);
+                    } else {
+                        eprintln!("[server] Skipping special entry, {} not available", special.display());
                     }
                 }
             }
