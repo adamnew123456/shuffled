@@ -241,12 +241,7 @@ impl PlaylistQueue {
             return;
         }
 
-        let time = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or(12345);
-
-        let mut rng = random::default().seed([time, 0]);
+        let mut rng = utils::seeded_random();
 
         for (disk_playlist, disk_songs) in playlists.iter_mut() {
             if disk_songs.len() == 0 {

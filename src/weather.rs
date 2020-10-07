@@ -198,14 +198,20 @@ pub fn weather_worker(working_dir: PathBuf, config: SpecialWeatherConfig) {
         "https://api.weather.gov/gridpoints/{}/forecast",
         config.region
     );
-    let wait_interval = Duration::from_secs(60 * 60);
-    let mut sleep_intervals = 0;
 
     let temp_files = utils::FileOutputs {
         mono_wav: &working_dir.join("weather-mono.wav"),
         stereo_wav: &working_dir.join("weather-stereo.wav"),
         lame_mp3: &working_dir.join(WEATHER_MP3_FILE),
     };
+
+    let wait_interval = Duration::from_secs(60 * 60);
+    let mut sleep_intervals =
+        if temp_files.lame_mp3.is_file() {
+            1
+        } else {
+            0
+        };
 
     loop {
         if sleep_intervals > 0 {

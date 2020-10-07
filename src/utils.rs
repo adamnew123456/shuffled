@@ -1,5 +1,10 @@
+use random;
+use std::convert::TryInto;
+use std::fs;
+use std::io::prelude::*;
 use std::path::Path;
 use std::process::Command;
+use std::time::SystemTime;
 
 /// Describes where the separates stages of the reader process should write
 /// their data to
@@ -52,4 +57,25 @@ pub fn read_text_announcement(
         .or_else(|err| Err(format!("Could not invoke eyeD3: {}", err)))?;
 
     Ok(())
+}
+
+/// Creates a new RNG seeded either from /dev/urandom or the system time
+pub fn seeded_random() -> random::Default {
+    let (upper_seed, lower_seed) = fs::File::open("/dev/urandom")
+        .map(|mut urandom| {
+            let mut buffer = [0; 16];
+            if let Ok(16) = urandom.read(&mut buffer) {
+                let upper = u64::from_le_bytes(buffer[..8].try_into().unwrap());
+                let lower = u64::from_le_bytes(buffer[8..].try_into().unwrap());
+                (upper, lower)
+            } else if let Ok(duration) = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                let upper = (duration.as_nanos() >> 64) as u64;
+                let lower = duration.as_nanos() as u64;
+                (upper, lower)
+            } else {
+                (12345, 67890)
+            }
+        }).unwrap_or((12345, 67890));
+
+    random::default().seed([upper_seed, lower_seed])
 }
