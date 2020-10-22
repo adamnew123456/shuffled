@@ -23,6 +23,7 @@ enum RpcRequest {
     GetPlaylist,
     SwitchPlaylist(String),
     ReloadPlaylists,
+    ShufflePlaylists,
     InvalidRequest,
     UnknownCommand,
     InvalidParameter,
@@ -68,6 +69,12 @@ impl Playlist {
     /// Advances the current song to the next song
     fn next(&mut self) {
         self.position = (self.position + 1) % self.songs.len();
+    }
+
+    /// Shuffles the playlist and resets the current position
+    fn shuffle(&mut self, rng: &mut impl random::Source) {
+        shuffle(&mut self.songs, rng);
+        self.position = 0;
     }
 
     /// Computes a delta between this playlist and another set of songs
@@ -234,6 +241,13 @@ struct PlaylistQueue {
 }
 
 impl PlaylistQueue {
+    /// Shuffles all the playlists in the queue
+    fn shuffle_all(&mut self, rng: &mut impl random::Source) {
+        self.playlists
+            .iter_mut()
+            .for_each(|(_, playlist)| playlist.shuffle(rng));
+    }
+
     /// Combines a basic playlist with this one, making sure to preserve the
     /// order and position of the current playlist as much as possible
     fn merge_with(&mut self, playlists: &mut SimplePlaylists) {
@@ -435,6 +449,7 @@ fn try_parse_request(buffer: &[u8]) -> Option<(RpcRequest, usize)> {
         "list-playlists" => Some((RpcRequest::ListPlaylists, first_newline + 1)),
         "get-playlist" => Some((RpcRequest::GetPlaylist, first_newline + 1)),
         "reload-playlists" => Some((RpcRequest::ReloadPlaylists, first_newline + 1)),
+        "shuffle-playlists" => Some((RpcRequest::ShufflePlaylists, first_newline + 1)),
         "switch-playlist" => {
             if !document.has_key("playlist") {
                 Some((RpcRequest::InvalidParameter, first_newline + 1))
@@ -573,6 +588,12 @@ fn process_request<'a>(
             } else {
                 RpcResponse::NoSuchPlaylist
             }
+        }
+
+        RpcRequest::ShufflePlaylists => {
+            let mut rng = utils::seeded_random();
+            queue.shuffle_all(&mut rng);
+            RpcResponse::Ok
         }
 
         RpcRequest::ReloadPlaylists => {
