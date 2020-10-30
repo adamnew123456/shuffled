@@ -1,0 +1,128 @@
+#!/bin/sh
+#
+# Basic shuffled command-line client. Requires:
+#
+# - netcat-openbsd
+# - jq
+SOCKET="$1"
+COMMAND="$2"
+ARG="$3"
+
+usage() {
+    echo "shufflectl - Control utility for shuffled
+
+shufflectl SOCKET SUBCOMMAND [ARGS ...]
+
+Arguments:
+
+- SOCKET: The path to the Unix domain socket used by shuffled. This will be the
+  value of the service.ipc_socket option in shuffled.conf.
+
+Subcommands:
+
+- next-track
+    Prints the path of the file to play next and advances to the next track.
+
+- list-playlists
+    Prints out a list of playlists which are recognized by the switch-playlist
+    command, one per line.
+
+- get-playlist
+    Prints out the name of the currently active playlist.
+
+- switch-playlist PLAYLIST
+    Sets the current playlist to the one provided. Must be a playlist name that
+    is returned by list-playlists.
+
+- reload-playlists
+    Reloads the currently list of playlists from the files on disk and caches
+    them until the next run of this command. This will try to preserve the
+    current playlist and position within that playlist if possible.
+
+- shuffle-playlists
+    Reorders all the playlists randomly and resets the current position in each
+    playlist.
+"
+    exit
+}
+
+invoke_netcat() {
+    nc -w1 -U "$SOCKET"
+}
+
+next_track_cmd() {
+    REPLY="$(printf '{"command":"next-track"}\n' | invoke_netcat)"
+    TRACK=$(echo "$REPLY" | jq -r .track)
+    STATUS=$(echo "$REPLY" | jq -r .status)
+
+    case $STATUS in
+        null)
+            echo "$TRACK" ;;
+        *)
+            echo "Error: $STATUS"
+            exit 1 ;;
+    esac
+}
+
+list_playlists_cmd() {
+    printf '{"command":"list-playlists"}\n' | invoke_netcat | jq -r '.playlists[]'
+}
+
+get_playlist_cmd() {
+    printf '{"command":"get-playlist"}\n' | invoke_netcat | jq -r .playlist
+}
+
+switch_playlist_cmd() {
+    STATUS=$(printf '{"command":"switch-playlist", "playlist": "%s"}\n' "$1" | invoke_netcat | jq -r .status)
+    case $STATUS in
+        ok) ;;
+        *)
+            echo "Error: $STATUS"
+            exit 1 ;;
+    esac
+}
+
+reload_playlists_cmd() {
+    STATUS=$(printf '{"command":"reload-playlists"}\n' | invoke_netcat | jq -r .status)
+    case $STATUS in
+        ok) ;;
+        *)
+            echo "Error: $STATUS"
+            exit 1 ;;
+    esac
+}
+
+shuffle_playlists_cmd() {
+    printf '{"command":"shuffle-playlists"}\n' | invoke_netcat
+}
+
+case $COMMAND in
+    next-track)
+        next_track_cmd ;;
+
+    list-playlists)
+        list_playlists_cmd ;;
+
+    get-playlist)
+        get_playlist_cmd ;;
+
+    switch-playlist)
+        if [ -z "$ARG" ]; then
+            usage
+            exit 1
+        else
+            switch_playlist_cmd $ARG
+        fi ;;
+
+    reload-playlists)
+        reload_playlists_cmd ;;
+
+    shuffle-playlists)
+        shuffle_playlists_cmd ;;
+
+    *)
+        usage
+        exit 1 ;;
+esac
+
+exit 0
