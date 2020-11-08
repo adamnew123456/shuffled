@@ -24,6 +24,8 @@ enum RpcRequest {
     SwitchPlaylist(String),
     ReloadPlaylists,
     ShufflePlaylists,
+    PreviewPlaylist(String),
+    ReloadTags,
     InvalidRequest,
     UnknownCommand,
     InvalidParameter,
@@ -34,6 +36,7 @@ enum RpcRequest {
 enum RpcResponse<'a> {
     Ok,
     Track(PathBuf),
+    Tracks(json::JsonValue),
     Playlists(Vec<&'a String>),
     Playlist(&'a str),
     NoSuchPlaylist,
@@ -59,6 +62,16 @@ impl Playlist {
         } else {
             Some(Playlist { position: 0, songs })
         }
+    }
+
+    /// Gets the playlist's current position
+    fn position(&self) -> usize {
+        self.position
+    }
+
+    /// Resets the playlist's current position to the given position
+    fn seek(&mut self, position: usize) {
+        self.position = position % self.songs.len();
     }
 
     /// Returns the playlist's current song
@@ -95,6 +108,53 @@ impl Playlist {
         }
 
         (to_add, to_remove)
+    }
+
+    /// Updates the ID3 directory and adds adds tags for any files that do not
+    /// exist already. Any files in the directory are skipped.
+    fn update_id3_directory(&self, directory: &mut ID3Directory) {
+        for song in self.songs.iter() {
+            let path_tags = song
+                .as_path()
+                .to_str()
+                .ok_or(format!(
+                    "Could not convert path {} to UTF-8 string",
+                    song.display()
+                ))
+                .and_then(|path| {
+                    if !directory.contains_key(path) {
+                        Ok(path)
+                    } else {
+                        Err(format!("ID3 for {} already cached", path))
+                    }
+                })
+                .and_then(|path| {
+                    fs::File::open(path)
+                        .map(|file| (path, file))
+                        .or_else(|err| Err(format!("Could not open file at {}: {}", path, err)))
+                })
+                .and_then(|(path, mut file)| {
+                    utils::ID3::from_stream(&mut file)
+                        .or_else(|err| {
+                            let err_msg: String = err.into();
+                            Err(format!(
+                                "Could not parse tags from {}: {}",
+                                song.display(),
+                                err_msg
+                            ))
+                        })
+                        .map(|tags| (path, tags))
+                });
+
+            match path_tags {
+                Ok((path, tags)) => {
+                    directory.insert(path.to_string(), tags);
+                }
+                Err(error) => {
+                    eprintln!("[service] {}", error);
+                }
+            }
+        }
     }
 
     /// Adds and removes songs from the given delta lists, putting all the songs
@@ -147,6 +207,9 @@ type Playlists = HashMap<String, Playlist>;
 
 /// A group of named playlists without any position information
 type SimplePlaylists = HashMap<String, Vec<PathBuf>>;
+
+/// A repository of all ID3 tags organized by file
+type ID3Directory = HashMap<String, utils::ID3>;
 
 /// An entry in the special playlist, which either reports an existing file or
 /// generates one
@@ -238,6 +301,7 @@ struct PlaylistQueue {
     current_playlist: String,
     playlists: Playlists,
     directory: PathBuf,
+    id3_tags: HashMap<String, utils::ID3>,
 }
 
 impl PlaylistQueue {
@@ -256,6 +320,7 @@ impl PlaylistQueue {
         }
 
         let mut rng = utils::seeded_random();
+        let mut id3_directory = &mut self.id3_tags;
 
         for (disk_playlist, disk_songs) in playlists.iter_mut() {
             if disk_songs.len() == 0 {
@@ -267,19 +332,23 @@ impl PlaylistQueue {
                     let (mut to_add, to_remove) = our_playlist.diff_playlist(disk_songs);
                     shuffle(&mut to_add, &mut rng);
                     our_playlist.merge_songs(&to_add, &to_remove);
+                    our_playlist.update_id3_directory(&mut id3_directory);
                 }
 
                 None => {
-                    let mut shuffled_songs = disk_songs.clone();
-                    shuffle(&mut shuffled_songs, &mut rng);
-                    self.playlists.insert(
-                        disk_playlist.to_string(),
-                        Playlist::new(shuffled_songs).unwrap(),
-                    );
+                    let mut added_playlist = Playlist::new(disk_songs.to_vec()).unwrap();
+                    added_playlist.shuffle(&mut rng);
+                    added_playlist.update_id3_directory(&mut id3_directory);
+                    self.playlists
+                        .insert(disk_playlist.to_string(), added_playlist);
                 }
             }
         }
 
+        // Note that we don't garbage collect any removed playlist ID3 entries
+        // here, mostly because they're not large enough to really matter. If
+        // the admin notices this they can do a full playlist flush and recompute
+        // the tag cache from scratch
         let to_remove_playlists = {
             self.playlists
                 .keys()
@@ -450,6 +519,7 @@ fn try_parse_request(buffer: &[u8]) -> Option<(RpcRequest, usize)> {
         "get-playlist" => Some((RpcRequest::GetPlaylist, first_newline + 1)),
         "reload-playlists" => Some((RpcRequest::ReloadPlaylists, first_newline + 1)),
         "shuffle-playlists" => Some((RpcRequest::ShufflePlaylists, first_newline + 1)),
+        "reload-tags" => Some((RpcRequest::ReloadTags, first_newline + 1)),
         "switch-playlist" => {
             if !document.has_key("playlist") {
                 Some((RpcRequest::InvalidParameter, first_newline + 1))
@@ -457,6 +527,19 @@ fn try_parse_request(buffer: &[u8]) -> Option<(RpcRequest, usize)> {
                 match document["playlist"].as_str() {
                     Some(playlist) => Some((
                         RpcRequest::SwitchPlaylist(playlist.to_string()),
+                        first_newline + 1,
+                    )),
+                    None => Some((RpcRequest::InvalidParameter, first_newline + 1)),
+                }
+            }
+        }
+        "preview-playlist" => {
+            if !document.has_key("playlist") {
+                Some((RpcRequest::InvalidParameter, first_newline + 1))
+            } else {
+                match document["playlist"].as_str() {
+                    Some(playlist) => Some((
+                        RpcRequest::PreviewPlaylist(playlist.to_string()),
                         first_newline + 1,
                     )),
                     None => Some((RpcRequest::InvalidParameter, first_newline + 1)),
@@ -475,6 +558,12 @@ fn send_response(stream: &mut impl Write, response: RpcResponse) -> io::Result<(
             let path_raw = path.to_string_lossy().to_string();
             let encoded = json::stringify(json::JsonValue::String(path_raw));
             stream.write_all("{\"track\":".as_bytes())?;
+            stream.write_all(encoded.as_bytes())?;
+            stream.write_all("}\n".as_bytes())
+        }
+        RpcResponse::Tracks(tracks) => {
+            let encoded = json::stringify(tracks);
+            stream.write_all("{\"tracks\":".as_bytes())?;
             stream.write_all(encoded.as_bytes())?;
             stream.write_all("}\n".as_bytes())
         }
@@ -563,7 +652,10 @@ fn process_request<'a>(
                         special_queue.update_timer();
                         return RpcResponse::Track(special);
                     } else {
-                        eprintln!("[server] Skipping special entry, {} not available", special.display());
+                        eprintln!(
+                            "[server] Skipping special entry, {} not available",
+                            special.display()
+                        );
                     }
                 }
             }
@@ -590,9 +682,71 @@ fn process_request<'a>(
             }
         }
 
+        RpcRequest::PreviewPlaylist(playlist) => match queue.playlists.get_mut(&playlist) {
+            Some(playlist) => {
+                let mut array = Vec::new();
+                let start_pos = playlist.position();
+                for x in 0..5 {
+                    let file = playlist.current().clone();
+                    playlist.next();
+
+                    let mut file_entry = json::object::Object::new();
+                    if let Some(filename) = file.as_path().to_str() {
+                        file_entry.insert("offset", json::JsonValue::Number(x.into()));
+
+                        let json_filename = json::JsonValue::String(filename.to_string());
+                        file_entry.insert("file", json_filename);
+
+                        let mut id3_obj = json::object::Object::new();
+                        if let Some(tags) = queue.id3_tags.get(filename) {
+                            let json_title = json::JsonValue::String(tags.title().to_string());
+                            id3_obj.insert("title", json_title);
+
+                            let json_artist = json::JsonValue::String(tags.artist().to_string());
+                            id3_obj.insert("artist", json_artist);
+
+                            let json_album = json::JsonValue::String(tags.album().to_string());
+                            id3_obj.insert("album", json_album);
+
+                            let json_comment = json::JsonValue::String(tags.comment().to_string());
+                            id3_obj.insert("comment", json_comment);
+
+                            let json_year = json::JsonValue::Number(tags.year().into());
+                            id3_obj.insert("year", json_year);
+
+                            if let Some(track) = tags.track() {
+                                let json_track = json::JsonValue::Number((*track).into());
+                                id3_obj.insert("track", json_track);
+                            }
+
+                            let json_genre = json::JsonValue::String(tags.genre().into());
+                            id3_obj.insert("genre", json_genre);
+                        }
+
+                        file_entry.insert("id3", json::JsonValue::Object(id3_obj));
+                        array.push(json::JsonValue::Object(file_entry));
+                    }
+                }
+
+                playlist.seek(start_pos);
+                RpcResponse::Tracks(json::JsonValue::Array(array))
+            }
+            None => RpcResponse::NoSuchPlaylist,
+        },
+
         RpcRequest::ShufflePlaylists => {
             let mut rng = utils::seeded_random();
             queue.shuffle_all(&mut rng);
+            RpcResponse::Ok
+        }
+
+        RpcRequest::ReloadTags => {
+            let mut id3_directory = &mut queue.id3_tags;
+            id3_directory.clear();
+            queue
+                .playlists
+                .iter()
+                .for_each(|(_, playlist)| playlist.update_id3_directory(&mut id3_directory));
             RpcResponse::Ok
         }
 
@@ -686,9 +840,10 @@ pub fn server_worker(service_config: ServiceConfig, special_config: SpecialBaseC
     let init_playlists = match read_m3u8_files(&service_config.playlist_dir) {
         Ok(mut playlists) => playlists
             .drain()
-            .map(|(playlist, mut paths)| {
-                shuffle(&mut paths, &mut rng);
-                (playlist, Playlist::new(paths).unwrap())
+            .map(|(playlist, paths)| {
+                let mut add_playlist = Playlist::new(paths).unwrap();
+                add_playlist.shuffle(&mut rng);
+                (playlist, add_playlist)
             })
             .collect::<HashMap<String, Playlist>>(),
         Err(error) => {
@@ -698,10 +853,16 @@ pub fn server_worker(service_config: ServiceConfig, special_config: SpecialBaseC
         }
     };
 
+    let mut id3_directory = HashMap::new();
+    init_playlists
+        .iter()
+        .for_each(|(_, playlist)| playlist.update_id3_directory(&mut id3_directory));
+
     let mut queue = PlaylistQueue {
         current_playlist: init_playlists.keys().next().unwrap().to_string(),
         playlists: init_playlists,
         directory: service_config.playlist_dir,
+        id3_tags: id3_directory,
     };
 
     let mut special_entries = Vec::new();

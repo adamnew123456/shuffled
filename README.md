@@ -158,11 +158,56 @@ responses:
   
 ```
 /* Request */
-{"status": "switch-playlist"}
+{"status": "switch-playlist", "playlist": "<playlist name>"}
 
 /* Response */
 {"status": "ok"}
 
 /* The named playlist doesn't exist. */
 {"status": "no-such-playlist"}
+```
+
+- **Preview the Songs on a Playlist** The `preview-playlist` command retrieves
+  the list of songs scheduled to play on a given playlist, starting from the
+  current song and going until the end of the playlist (when it would loop to
+  the current song). This returns the list of songs including ID3 tags if there
+  are any available.
+  
+```
+/* Request */
+{"status": "preview-playlist", "playlist": "<playlist name>"}
+
+/* Response */
+{"tracks": [
+  {
+    "file": "<filename of the MP3 file>",
+    "offset": 0, /* Relative to the current track */
+    "id3": { /* All sub-keys are optional. Any ID3 elements that
+                don't exist or can't be decoded as UTF-8 are exlcuded.
+                The id3 document will always be included even if empty. */
+      "title": "<title>",
+      "artist": "<artist>",
+      "album": "<album>",
+      "year": 1999,
+      "comment": "<comment>",
+      "track": 42,
+      "genre": "<genre>"
+    }
+  }
+]}
+
+/* The named playlist doesn't exist */
+{"status": "no-such-playlist"}
+```
+
+- **Reload the ID3 Tags from Disk** The `reload-tags` command flushes the
+  shuffled internal ID3 cache and refreshes all the tags for every file that
+  appears in a playlist.
+  
+```
+/* Request */
+{"command": "reload-tags"}
+
+/* Response */
+{"status": "ok"}
 ```

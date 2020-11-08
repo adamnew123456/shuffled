@@ -67,14 +67,13 @@ fn probe_icecast(addr: &net::SocketAddr, path: &str, timeout_sec: u32) -> Result
     }
 
     let status_slice = &response[..offset];
-    let status_start = status_slice.iter().position(|x| *x == 32)
-        .ok_or_else(|| {
-            eprintln!(
-                "[watchdog] Could not find first space character in HTTP response to {}@{}",
-                path, addr
-            );
-            ()
-        })?;
+    let status_start = status_slice.iter().position(|x| *x == 32).ok_or_else(|| {
+        eprintln!(
+            "[watchdog] Could not find first space character in HTTP response to {}@{}",
+            path, addr
+        );
+        ()
+    })?;
 
     let status_end = status_slice[status_start + 1..]
         .iter()
@@ -85,7 +84,9 @@ fn probe_icecast(addr: &net::SocketAddr, path: &str, timeout_sec: u32) -> Result
                 path, addr
             );
             ()
-        })? + status_start + 1;
+        })?
+        + status_start
+        + 1;
 
     let status = str::from_utf8(&status_slice[status_start + 1..status_end]).or_else(|error| {
         eprintln!(

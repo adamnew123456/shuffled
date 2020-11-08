@@ -206,12 +206,7 @@ pub fn weather_worker(working_dir: PathBuf, config: SpecialWeatherConfig) {
     };
 
     let wait_interval = Duration::from_secs(60 * 60);
-    let mut sleep_intervals =
-        if temp_files.lame_mp3.is_file() {
-            1
-        } else {
-            0
-        };
+    let mut sleep_intervals = if temp_files.lame_mp3.is_file() { 1 } else { 0 };
 
     loop {
         if sleep_intervals > 0 {

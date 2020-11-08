@@ -34,10 +34,22 @@ Subcommands:
     Sets the current playlist to the one provided. Must be a playlist name that
     is returned by list-playlists.
 
+- preview-playlists PLAYLIST
+    Returns a listing of the next 5 songs to play on the given playlist, including
+    filename and ID3 tags.
+
 - reload-playlists
-    Reloads the currently list of playlists from the files on disk and caches
+    Reloads the current list of playlists from the files on disk and caches
     them until the next run of this command. This will try to preserve the
     current playlist and position within that playlist if possible.
+
+    It also reads in any ID3 tags for any new files but does not clean out
+    stale entries in the ID3 tag cache. To clean the cache fully use
+    reload-tags.
+
+- reload-tags
+    Reloads the ID3 tag cache from scratch; for each file in each playlist,
+    reads the ID3 tags and saves them for the preview command.
 
 - shuffle-playlists
     Reorders all the playlists randomly and resets the current position in each
@@ -82,8 +94,32 @@ switch_playlist_cmd() {
     esac
 }
 
+preview_playlist_cmd() {
+    REPLY="$(printf '{"command":"preview-playlist","playlist": "%s"}\n' "$1" | invoke_netcat)"
+    TRACKS=$(echo "$REPLY" | jq -r .tracks)
+    STATUS=$(echo "$REPLY" | jq -r .status)
+
+    case $STATUS in
+        null)
+            echo "$TRACKS" ;;
+        *)
+            echo "Error: $STATUS"
+            exit 1 ;;
+    esac
+}
+
 reload_playlists_cmd() {
     STATUS=$(printf '{"command":"reload-playlists"}\n' | invoke_netcat | jq -r .status)
+    case $STATUS in
+        ok) ;;
+        *)
+            echo "Error: $STATUS"
+            exit 1 ;;
+    esac
+}
+
+reload_tags_cmd() {
+    STATUS=$(printf '{"command":"reload-tags"}\n' | invoke_netcat | jq -r .status)
     case $STATUS in
         ok) ;;
         *)
@@ -114,8 +150,19 @@ case $COMMAND in
             switch_playlist_cmd $ARG
         fi ;;
 
+    preview-playlist)
+        if [ -z "$ARG" ]; then
+            usage
+            exit 1
+        else
+            preview_playlist_cmd $ARG
+        fi ;;
+
     reload-playlists)
         reload_playlists_cmd ;;
+
+    reload-tags)
+        reload_tags_cmd ;;
 
     shuffle-playlists)
         shuffle_playlists_cmd ;;
