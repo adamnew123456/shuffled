@@ -202,7 +202,8 @@ pub fn weather_worker(working_dir: PathBuf, config: SpecialWeatherConfig) {
     let temp_files = utils::FileOutputs {
         mono_wav: &working_dir.join("weather-mono.wav"),
         stereo_wav: &working_dir.join("weather-stereo.wav"),
-        lame_mp3: &working_dir.join(WEATHER_MP3_FILE),
+        lame_mp3: &working_dir.join("weather-transcode.mp3"),
+        final_mp3: &working_dir.join(WEATHER_MP3_FILE),
     };
 
     let wait_interval = Duration::from_secs(60 * 60);
@@ -229,7 +230,7 @@ pub fn weather_worker(working_dir: PathBuf, config: SpecialWeatherConfig) {
         let end_time = start_time + chrono::Duration::hours(config.duration as i64);
         let forecast_str = generate_weather_string(&forecasts, start_time, end_time);
         if let Err(error) =
-            utils::read_text_announcement(&forecast_str, &temp_files, "Weather Report")
+            utils::read_text_announcement(&forecast_str, &temp_files, "w")
         {
             eprintln!("[weather] {}", error);
             sleep_intervals = 1;

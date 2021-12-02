@@ -266,7 +266,8 @@ impl SpecialQueue {
                 let paths = utils::FileOutputs {
                     mono_wav: &self.working_dir.join("clock-mono.wav"),
                     stereo_wav: &self.working_dir.join("clock-stereo.wav"),
-                    lame_mp3: &self.working_dir.join(CLOCK_MP3_FILE),
+                    lame_mp3: &self.working_dir.join("clock-transcode.mp3"),
+                    final_mp3: &self.working_dir.join(CLOCK_MP3_FILE),
                 };
 
                 let current_time = Local::now();
