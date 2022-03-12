@@ -283,7 +283,7 @@ impl SpecialQueue {
                     eprintln!("[service] {}", error);
                     None
                 } else {
-                    Some(paths.lame_mp3.to_path_buf())
+                    Some(paths.final_mp3.to_path_buf())
                 }
             }
 
